@@ -1,0 +1,16 @@
+---
+title: "DATA 622: Final Project"
+author: "Group 3: Karim Hammoud and Michael Munguia"
+date: "12/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  cache.extra = knitr::rand_seed, echo = TRUE, warning = FALSE, message = FALSE
+  )
+
+library(tidyverse)
+```
+
+
