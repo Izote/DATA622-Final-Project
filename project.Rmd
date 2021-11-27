@@ -7,10 +7,89 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
-  cache.extra = knitr::rand_seed, echo = TRUE, warning = FALSE, message = FALSE
+  cache.extra = knitr::rand_seed, echo = FALSE, warning = FALSE, message = FALSE
   )
 
 library(tidyverse)
+
+path <- "C:/Users/neapo/Desktop/project/"
+recipes <- read_csv(str_c(path, "recipes.csv"))
+reviews <- read_csv(str_c(path, "reviews.csv"))
 ```
 
+While strategic sampling is a general best practice, this specific data set is large and it will be important to have an intentional approach to sampling. We might aim to predict a recipe's success in terms of its average user rating, so understanding that variable is a decent first step.
 
+```{r}
+get_ranks <- function(df, variable, order_levels, group_name = "rank") {
+  df <- df %>% 
+    mutate(across(variable, factor, levels = order_levels, ordered = TRUE)) %>%
+    group_by(across(variable)) %>% 
+    tally()
+  
+  if (variable != group_name) {
+    colnames(df)[[1]] <- group_name
+  }
+  
+  df$variable <- variable
+  df
+}
+
+ratings <- seq(0, 5, 0.5)
+review_ranks <- get_ranks(reviews, "Rating", ratings)
+recipe_ranks <- get_ranks(recipes, "AggregatedRating", ratings)
+```
+
+In visualizing ratings (global actual reviews across the site and aggregated figures for the available recipes), there are two primary revelations:
+
+* Users seem to take an all-or-nothing approach to reviewing. That is, 5-star ratings hugely overwhelm other all ratings.
+* Nearly half of our given recipe data set is missing an aggregate rating. 
+
+```{r}
+bind_rows(review_ranks, recipe_ranks) %>% 
+  mutate(across(
+    "variable", 
+    ~ if_else(. == "Rating", "Global Ratings (Actual)", "Available Subset (Aggregated)")
+    )) %>% 
+  ggplot(aes(rank, n)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::comma_format()) +
+  facet_wrap("variable", nrow = 2, scales = "free")
+```
+
+A quick comparison of the data sets show that the recipes missing aggregated rating values are not found among the full set of reviews provided. As a result, we will cull our working data set to just those recipes with an aggregated rating down to half because of that alone. Because there are significant number of observations with missing values among the numeric variables, we will also drop these observations wholesale leaving us with just over 170,000 observations by the end. This is not as impressive as the initial overall set, but significantly more workable without much overhead.
+
+Many of the variables are simply identifying elements utilized by the website the data were sourced from. There are, however, a number of nutritional variables that will give us quantifiable, numeric measures for each recipe.
+
+```{r}
+recipes_dbl <- recipes %>%
+  filter(!is.na(AggregatedRating)) %>% 
+  select(where(is_double), -AuthorId, -DatePublished) %>%
+  drop_na()
+```
+
+```{r}
+recipes_dbl %>% 
+  pivot_longer(-AggregatedRating) %>% 
+  ggplot(aes(value, AggregatedRating)) +
+  geom_jitter() + 
+  facet_wrap("name", scales = "free", ncol = 3)
+```
+
+Examining the correlation between the various numeric variables and aggregated rating, we see no strong correlations between any specific variable and aggregated rating. There are, however, correlations across the potential predictors here. For example, there is a strong positive correlation between the overall number calories and fat content of a recipe. Given a minimal awareness of food nutrition, this makes sense - higher fat suggests higher calories, higher carbohydrates suggests higher sugar content and so forth.
+
+```{r}
+cor(select(recipes_dbl, -RecipeId))
+```
+
+Given the interrelated nature of the nutritional variables, they are good candidates for principal component analysis (PCA). We prepare the data by scaling (centering by default) the variables and produced the results below.
+
+```{r}
+recipe_pca <- recipes_dbl %>%
+  select(-c("RecipeId", "AggregatedRating")) %>% 
+  mutate(across(everything(), ~ scale(.)[ , 1])) %>%
+  prcomp()
+
+summary(recipe_pca)
+```
+
+Based on the summary output, we can see that about 39% of the variability can be explained within the first principal component (PC). Including more of the initial PCs, we can up this proportion and achieve about 73% with the first four PCs.
