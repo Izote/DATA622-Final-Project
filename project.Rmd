@@ -13,8 +13,9 @@ knitr::opts_chunk$set(
   )
 
 library(tidyverse)
+library(e1071)
 
-path <- "C:/Users/neapo/Desktop/project/"
+path <- "D:/archive/"
 recipes <- read_csv(str_c(path, "recipes.csv"), show_col_types = FALSE)
 reviews <- read_csv(str_c(path, "reviews.csv"), show_col_types = FALSE)
 ```
@@ -71,7 +72,7 @@ recipes_dbl <- recipes %>%
 
 ```{r}
 recipes_dbl %>% 
-  pivot_longer(-RecipeId, -AggregatedRating) %>% 
+  pivot_longer(c(-RecipeId, -AggregatedRating)) %>% 
   ggplot(aes(value, AggregatedRating)) +
   geom_jitter() + 
   facet_wrap("name", scales = "free", ncol = 3)
@@ -98,43 +99,60 @@ Based on the summary output, we can see that about 39% of the variability can be
 
 # Modeling
 
+
+```{r}
+try_svm <- function(
+  data, k = 5, kernel = "radial", type = "C-classification"
+  ) {
+    tune.svm(
+      AggregatedRating ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6,
+      data = data,
+      type = type,
+      cost = seq(0.10, 1, 0.10),
+      kernel = kernel,
+      cross = k
+    )
+  }
+
+eval_regr <- function(data, model) {
+  list(
+    MSE = Metrics::mse(data$AggregatedRating, predict(model)),
+    RMSE = Metrics::rmse(data$AggregatedRating, predict(model)),
+    MAE = Metrics::mae(data$AggregatedRating, predict(model))
+  )
+}
+
+eval_class <- function(data, model) {
+  table(
+    expected = data$AggregatedRating,
+    predicted = predict(model, type = "class")
+    )
+}
+```
+
 ```{r}
 set.seed(3)
 
-model_data <- bind_cols(
+full_pca_data <- bind_cols(
   select(recipes_dbl, RecipeId, AggregatedRating),
   as_tibble(recipe_pca$x)
-  ) %>% 
-  sample_n(100)
-
-train <- sample_frac(model_data, 0.80)
-remainder <- anti_join(model_data, train, by = "RecipeId")
-
-test <- sample_frac(remainder, 0.50)
-valid <- anti_join(remainder, test, by = "RecipeId")
-```
-
-```{r}
-library(e1071)
-library(Metrics)
-
-recipe_svm <- svm(
-  AggregatedRating ~ . -RecipeId,
-  data = train, type = "eps-regression"
   )
-```
 
-```{r}
-# MSE
-Metrics::mse(train$AggregatedRating, predict(recipe_svm))
-```
+ratings_list <- map2(
+  c(0, 2, 3, 4, 5),
+  c(1.5, 2.5, 3.5, 4.5, 5.5), 
+  ~ full_pca_data %>%
+    filter(.x <= AggregatedRating & AggregatedRating <= .y)
+  )
 
-```{r}
-# MAE
-Metrics::mae(train$AggregatedRating, predict(recipe_svm))
-```
+modeling_n <- nrow(ratings_list[[1]])
+model_data <- map(ratings_list, sample_n, size = modeling_n)
 
-```{r}
-# RMSE
-Metrics::rmse(train$AggregatedRating, predict(recipe_svm))
+train <- map_dfr(model_data, sample_frac, size = 0.80)
+test <- anti_join(bind_rows(model_data), train, by = "RecipeId")
+
+radial_svm <- try_svm(train)
+best_radial <- radial_svm$best.model
+
+eval_regr(train, best_radial)
 ```
