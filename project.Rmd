@@ -1,9 +1,11 @@
 ---
 title: "DATA 622: Final Project"
-author: "Group 3: Karim Hammoud and Michael Munguia"
+author: "Group 3"
 date: "12/10/2021"
 output: html_document
 ---
+
+# EDA
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -13,8 +15,8 @@ knitr::opts_chunk$set(
 library(tidyverse)
 
 path <- "C:/Users/neapo/Desktop/project/"
-recipes <- read_csv(str_c(path, "recipes.csv"))
-reviews <- read_csv(str_c(path, "reviews.csv"))
+recipes <- read_csv(str_c(path, "recipes.csv"), show_col_types = FALSE)
+reviews <- read_csv(str_c(path, "reviews.csv"), show_col_types = FALSE)
 ```
 
 While strategic sampling is a general best practice, this specific data set is large and it will be important to have an intentional approach to sampling. We might aim to predict a recipe's success in terms of its average user rating, so understanding that variable is a decent first step.
@@ -69,7 +71,7 @@ recipes_dbl <- recipes %>%
 
 ```{r}
 recipes_dbl %>% 
-  pivot_longer(-AggregatedRating) %>% 
+  pivot_longer(-RecipeId, -AggregatedRating) %>% 
   ggplot(aes(value, AggregatedRating)) +
   geom_jitter() + 
   facet_wrap("name", scales = "free", ncol = 3)
@@ -81,7 +83,7 @@ Examining the correlation between the various numeric variables and aggregated r
 cor(select(recipes_dbl, -RecipeId))
 ```
 
-Given the interrelated nature of the nutritional variables, they are good candidates for principal component analysis (PCA). We prepare the data by scaling (centering by default) the variables and produced the results below.
+Given the interrelated nature of the nutritional variables, they are good candidates for principal component analysis (PCA). We prepare the data by scaling and centering the variables and produce the results below.
 
 ```{r}
 recipe_pca <- recipes_dbl %>%
@@ -93,3 +95,46 @@ summary(recipe_pca)
 ```
 
 Based on the summary output, we can see that about 39% of the variability can be explained within the first principal component (PC). Including more of the initial PCs, we can up this proportion and achieve about 73% with the first four PCs.
+
+# Modeling
+
+```{r}
+set.seed(3)
+
+model_data <- bind_cols(
+  select(recipes_dbl, RecipeId, AggregatedRating),
+  as_tibble(recipe_pca$x)
+  ) %>% 
+  sample_n(100)
+
+train <- sample_frac(model_data, 0.80)
+remainder <- anti_join(model_data, train, by = "RecipeId")
+
+test <- sample_frac(remainder, 0.50)
+valid <- anti_join(remainder, test, by = "RecipeId")
+```
+
+```{r}
+library(e1071)
+library(Metrics)
+
+recipe_svm <- svm(
+  AggregatedRating ~ . -RecipeId,
+  data = train, type = "eps-regression"
+  )
+```
+
+```{r}
+# MSE
+Metrics::mse(train$AggregatedRating, predict(recipe_svm))
+```
+
+```{r}
+# MAE
+Metrics::mae(train$AggregatedRating, predict(recipe_svm))
+```
+
+```{r}
+# RMSE
+Metrics::rmse(train$AggregatedRating, predict(recipe_svm))
+```
