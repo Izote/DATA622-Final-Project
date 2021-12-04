@@ -15,9 +15,8 @@ knitr::opts_chunk$set(
 library(tidyverse)
 library(e1071)
 
-path <- "D:/archive/"
-recipes <- read_csv(str_c(path, "recipes.csv"), show_col_types = FALSE)
-reviews <- read_csv(str_c(path, "reviews.csv"), show_col_types = FALSE)
+recipes <- read_csv("./recipes.csv", show_col_types = FALSE)
+reviews <- read_csv("./reviews.csv", show_col_types = FALSE)
 ```
 
 While strategic sampling is a general best practice, this specific data set is large and it will be important to have an intentional approach to sampling. We might aim to predict a recipe's success in terms of its average user rating, so understanding that variable is a decent first step.
@@ -59,23 +58,44 @@ bind_rows(review_ranks, recipe_ranks) %>%
   facet_wrap("variable", nrow = 2, scales = "free")
 ```
 
-A quick comparison of the data sets show that the recipes missing aggregated rating values are not found among the full set of reviews provided. As a result, we will cull our working data set to just those recipes with an aggregated rating down to half because of that alone. Because there are significant number of observations with missing values among the numeric variables, we will also drop these observations wholesale leaving us with just over 170,000 observations by the end. This is not as impressive as the initial overall set, but significantly more workable without much overhead.
+A quick comparison of the data sets show that the recipes missing aggregated rating values are not found among the full set of reviews provided. As a result, we will cull our working data set to just those recipes with an aggregated rating down to half because of that alone. Because there are significant number of observations with missing values among the numeric variables, we will also drop these observations wholesale. Finally, observations with nutritional values outside three median absolute deviations from the median will be removed as outliers. These omissions leave us with 170,000 observations by the end. This is not as impressive as the initial overall set, but modeling becomes significantly more achievable.
 
-Many of the variables are simply identifying elements utilized by the website the data were sourced from. There are, however, a number of nutritional variables that will give us quantifiable, numeric measures for each recipe.
+Many of the variables are simply identifying elements utilized by the website the data were sourced from. There are, however, a number of nutritional variables that will give us quantifiable, numeric measures for each recipe. The number of servings produced from each recipe will be ignored, as these were deemed subjective. Further, because we are looking to predict recipe success *prior* to publishing, review count is also ignored as it assumes the recipe is already published.
+
 
 ```{r}
 recipes_dbl <- recipes %>%
   filter(!is.na(AggregatedRating)) %>% 
-  select(where(is_double), -AuthorId, -DatePublished) %>%
+  select(
+    where(is_double), -AuthorId, -DatePublished, -ReviewCount, -RecipeServings
+    ) %>%
   drop_na()
 ```
 
 ```{r}
-recipes_dbl %>% 
-  pivot_longer(c(-RecipeId, -AggregatedRating)) %>% 
-  ggplot(aes(value, AggregatedRating)) +
-  geom_jitter() + 
-  facet_wrap("name", scales = "free", ncol = 3)
+get_boundaries <- function(x) {median(x) + mad(x) * c(-3, 3)}
+
+boundary <- recipes_dbl %>% 
+  select(-RecipeId, -AggregatedRating) %>% 
+  as.list() %>% 
+  map(get_boundaries)
+
+recipes_dbl <- recipes_dbl %>% 
+  filter(
+      between(Calories, boundary$Calories[[1]], boundary$Calories[[2]]) &
+      between(FatContent, boundary$FatContent[[1]], boundary$FatContent[[2]]) &
+      between(SaturatedFatContent, boundary$SaturatedFatContent[[1]], boundary$SaturatedFatContent[[2]]) &
+      between(CholesterolContent, boundary$CholesterolContent[[1]], boundary$CholesterolContent[[2]]) &
+      between(SodiumContent, boundary$SodiumContent[[1]], boundary$SodiumContent[[2]]) &
+      between(CarbohydrateContent, boundary$CarbohydrateContent[[1]], boundary$CarbohydrateContent[[2]]) &
+      between(FiberContent, boundary$FiberContent[[1]], boundary$FiberContent[[2]]) &
+      between(SugarContent, boundary$SugarContent[[1]], boundary$SugarContent[[2]]) &
+      between(ProteinContent, boundary$ProteinContent[[1]], boundary$ProteinContent[[2]])
+    )
+```
+
+```{r}
+# dist visuals here.
 ```
 
 Examining the correlation between the various numeric variables and aggregated rating, we see no strong correlations between any specific variable and aggregated rating. There are, however, correlations across the potential predictors here. For example, there is a strong positive correlation between the overall number calories and fat content of a recipe. Given a minimal awareness of food nutrition, this makes sense - higher fat suggests higher calories, higher carbohydrates suggests higher sugar content and so forth.
@@ -89,28 +109,34 @@ Given the interrelated nature of the nutritional variables, they are good candid
 ```{r}
 recipe_pca <- recipes_dbl %>%
   select(-c("RecipeId", "AggregatedRating")) %>% 
-  mutate(across(everything(), ~ scale(.)[ , 1])) %>%
-  prcomp()
+  prcomp(scale = TRUE, center = TRUE)
 
 summary(recipe_pca)
 ```
 
-Based on the summary output, we can see that about 39% of the variability can be explained within the first principal component (PC). Including more of the initial PCs, we can up this proportion and achieve about 73% with the first four PCs.
+Based on the summary output, we can see that nearly half of the variability can be explained within the first principal component (PC). Including more of the initial PCs, we can up this proportion and achieve about 90% with the first five PCs.
 
 # Modeling
 
+Approaching the task of attempting to predict a recipe's success or overall rating as a function of its nutritional data, the chosen model for this purpose will be at least one Support Vector Machines (SVM) based model. The reasoning for this is that, in truth, recipe ratings can be reasonably thought of as either a continuous or categorical piece of data. Recipes on the origin website can only be assigned on a whole-star basis (e.g. one star, two stars, etc.) and aggregated results such as a 2.5 are a product of aggregation and not user input. As we saw before during EDA, most users tend to leave fairly undiscerning scores - that is, a full-five star rating for what they enjoyed and one-to-no stars for what they did not enjoy.
+
+One of the core benefits of pursuing an SVM based model is that the actual input/output of the target variable can be flexible. We can either treat the task as a classification or regression based on how the data is pre-processed. As such, we prepare two separate SVM models - one where the target is transformed to a binary class representing whether the recipe is well received and the other which seeks to predict aggregated rating. In order to facilitate this, the overall data is sampled in such a way that we do not use the whole data set - rather, we use a large enough set of observations such that we can have even samples of *recipes at each level of aggregate rating*. This overall sampling approach should both help provide well-balanced training data as well as reduce the computational overhead involved with SVM modeling.
+
+Using the `e1071` library, a function was prepared to optimize the cost parameter of potential SVM models, along with a pair of wrapper functions to generate evaluation measures. The code included with this report represents prior experimentation with kernel selection, which lead to the radial basis function kernel being the best performing in this circumstance. 
+
+# SVM
 
 ```{r}
 try_svm <- function(
-  data, k = 5, kernel = "radial", type = "C-classification"
+  data, type, k = 5, kernel = "radial"
   ) {
-    tune.svm(
-      AggregatedRating ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6,
-      data = data,
-      type = type,
-      cost = seq(0.10, 1, 0.10),
-      kernel = kernel,
-      cross = k
+  tune.svm(
+    AggregatedRating ~ PC1 + PC2 + PC3 + PC4 + PC5,
+    data = data,
+    type = type,
+    cost = seq(0.10, 1, 0.10),
+    kernel = kernel,
+    cross = k
     )
   }
 
@@ -130,6 +156,7 @@ eval_class <- function(data, model) {
 }
 ```
 
+
 ```{r}
 set.seed(3)
 
@@ -139,20 +166,41 @@ full_pca_data <- bind_cols(
   )
 
 ratings_list <- map2(
-  c(0, 2, 3, 4, 5),
-  c(1.5, 2.5, 3.5, 4.5, 5.5), 
+  c(1, 2, 3, 4, 5),
+  c(1.5, 2.5, 3.5, 4.5, 5), 
   ~ full_pca_data %>%
-    filter(.x <= AggregatedRating & AggregatedRating <= .y)
+    filter(between(AggregatedRating, .x, .y))
   )
 
 modeling_n <- nrow(ratings_list[[1]])
-model_data <- map(ratings_list, sample_n, size = modeling_n)
+model_data <- map(ratings_list, slice_sample, n = modeling_n)
 
-train <- map_dfr(model_data, sample_frac, size = 0.80)
+train <- map_dfr(model_data, slice_sample, prop = 0.80)
 test <- anti_join(bind_rows(model_data), train, by = "RecipeId")
 
-radial_svm <- try_svm(train)
-best_radial <- radial_svm$best.model
+svm_class <- train %>%
+  mutate(AggregatedRating = factor(if_else(AggregatedRating >= 3.5, 1, 0))) %>%
+  try_svm(type = "C-classification")
 
-eval_regr(train, best_radial)
+best_class <- svm_cls$best.model
+
+svm_reg <- train %>% 
+  try_svm(type = "eps-regression")
+
+best_regr <- svm_reg$best.model
+```
+
+
+```{r}
+(regr_eval <- eval_regr(train, best_regr))
+```
+
+```{r}
+(class_eval <- train %>% 
+  mutate(AggregatedRating = factor(if_else(AggregatedRating >= 3.5, 1, 0))) %>%
+  eval_class(best_class))
+```
+
+```{r}
+sum(diag(class_eval)) / sum(class_eval)
 ```
