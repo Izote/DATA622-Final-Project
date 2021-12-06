@@ -5,6 +5,12 @@ date: "12/10/2021"
 output: html_document
 ---
 
+# Introduction
+
+Through lockdowns and quarantines, the last two years have resulted in many Americans becoming more home-bound than they had been previously and with this change have come a myriad of health concerns. One such concern that has always been in the public eye concerns Americans' typical diet. Utilizing data originally sourced from Food.com and found on the popular Kaggle website, our group opted to work with an initially large data set of recipes hosted on the Food.com site. By exploring the data, we settled on a specific public health theme, namely, utilizing nutritional data to predict the fiber content of a given recipe.
+
+Despite 
+
 # EDA
 
 ```{r setup, include=FALSE}
@@ -24,8 +30,10 @@ While strategic sampling is a general best practice, this specific data set is l
 ```{r}
 get_ranks <- function(df, variable, order_levels, group_name = "rank") {
   df <- df %>% 
-    mutate(across(variable, factor, levels = order_levels, ordered = TRUE)) %>%
-    group_by(across(variable)) %>% 
+    mutate(across(
+      all_of(variable), factor, levels = order_levels, ordered = TRUE
+      )) %>%
+    group_by(across(all_of(variable))) %>% 
     tally()
   
   if (variable != group_name) {
@@ -50,7 +58,9 @@ An initial point of interest was aggregated ratings for the recipes. In visualiz
 bind_rows(review_ranks, recipe_ranks) %>% 
   mutate(across(
     "variable", 
-    ~ if_else(. == "Rating", "Global Ratings (Actual)", "Available Subset (Aggregated)")
+    ~ if_else(
+      . == "Rating", "Global Ratings (Actual)", "Available Subset (Aggregated)"
+      )
     )) %>% 
   ggplot(aes(rank, n)) +
   geom_col() +
@@ -105,15 +115,17 @@ recipe_dbl %>%
     )
 ```
 
-There is insufficient context and domain knowledge for us to impute missing values for any of the nutritional variables we wished to work with, and we had a very large data set to begin with, so rows with missing values were dropped from use. We also opted to ignore publication date, review counts and recipe servings which should all have no impact on the nutritional value of a given recipe. In particular, recipe servings were deemed subjective as these counts rely on too many elements external to the data. Lastly, outliers were detected and removed by evaluating rows with values outside a range of three mean absolute deviations from the median for each nutritional variable. 
+The distribution of fiber content across the robust set of data available handily illustrates our case in point - the available recipes are overwhelmingly low in fiber. While certainly the low-fiber intake for Americans may be attributed to cultural/societal elements, even the most diet-conscious home cook looking for high-fiber recipes will have a lot of trouble finding them without knowing what to look for. Considering the USDA's *Dietary Guidelines for Americans, 2020 - 2025*, adults are generally recommended to take in more than 20g of fiber a day. Even if we assumed each recipe represented a single meal, this looks unlikely to be achievable without some outside help beyond browsing a recipe website.
 
-Knowing we wished to utilize the nurtitional variables, we assessed the correlation between these variables. Specifying fiber content as our dependent or target variable, we can see that there is a moderate relationship between it and both the caloric and carbohydrate content of a recipe. Fat, sodium and protein content also showed a set of weak relationships with fiber content. It is notable that multicollinearity was present across the various nutritional variables, which makes intuitive sense.
+There is insufficient context for us to impute missing values for any of the nutritional variables we wished to work with, and we had a very large data set to begin with, so rows with missing values were dropped from use. We also opted to ignore publication date, review counts and recipe servings which should all have no impact on the nutritional value of a given recipe. In particular, recipe servings were deemed subjective as these counts rely on too many elements external to the data. Lastly, outliers were detected and removed by evaluating rows with values outside a range of three mean absolute deviations from the median for each nutritional variable. 
+
+Knowing we wished to utilize the nutritional variables, we assessed the correlation between these variables. Specifying fiber content as our dependent or target variable, we can see that there is a moderate relationship between it and both the caloric and carbohydrate content of a recipe. Fat, sodium and protein content also showed a set of weak relationships with fiber content. It is notable that multicollinearity was present across the various nutritional variables, which makes intuitive sense.
 
 ```{r}
 cor(select(recipe_dbl, -RecipeId))
 ```
 
-Given the interrelated nature of the nutritional variables, they are good candidates for principal component analysis (PCA). This will provide us the benefit of not only side-stepping multicollinearity issues by creating orthogonal variables, but we will also simplify our downstream modeling process as we will work with fewer variables. We will lose interpretability, as the PCs themselves will be difficult to express linguistically, but this is not something we're concerned about in this scenario. We prepare the data by scaling and centering the variables and produce the results below.
+Given the interrelated nature of the nutritional variables, we opted to conduct dimensionality reduction via principal component analysis (PCA). This will provide us the benefit of not only side-stepping multicollinearity issues by creating orthogonal variables, but we will also simplify our downstream modeling process as we will work with fewer variables. We *will* lose interpretability, as the PCs themselves will be difficult to express linguistically, but we are more interested in predictive ability rather than ease of interpretation/explanation. The results of our PCA, with scaled and centered values, can be reviewed below.
 
 ```{r}
 recipe_pca <- recipe_dbl %>%
@@ -123,13 +135,15 @@ recipe_pca <- recipe_dbl %>%
 summary(recipe_pca)
 ```
 
-Based on the summary output above, we can see that half of the variability can be explained within the first principal component (PC). Including more of the initial PCs, we can up this proportion and achieve just under 95% with the first five PCs. Regardless of our approach downstream, utilizing up to a handful of these variables means we've reduced our number of predictors by at least half.
+Based on the summary output above, we can see that half of the variability is explained within the first principal component (PC). Including more of the initial PCs, we can up this proportion and achieve just under 95% with the first five PCs. Regardless of our approach downstream, utilizing up to a handful of these variables means we've reduced our number of predictors directly used within our model by at least half.
 
 # Modeling
 
-Using the `e1071` library, a function was prepared to optimize the cost parameter of potential SVM models, along with a pair of wrapper functions to generate evaluation measures. Our approach was to parse through a series of potential cost values and ultimately selecting the best performing model, implementing 5-fold cross validation to help improve performance. In order to keep the computational overhead of the SVM approach minimal, we limited ourselves to using an overall sample of 1,000 observations - with 80% reserved for training the model and 20% for our final test. The code included with this report represents prior experimentation with kernel selection, which lead to the radial basis function kernel being the best performing in this circumstance. 
+Our modeling approach began with the construction of training and test data set, which was done by first sampling a smaller subset of the overall data available and parceling that subset out into a training and testing data set, representing a randomized 80% and 20% of the initial random sample respectively. In order to minimize computational overhead, we relied on an overall sample of 1,000 observations across both the training and testing data sets.
 
 # SVM
+
+Using the `e1071` library, a function was prepared to optimize the hyperparameters of our chosen predictive model - Support Vector Machines (SVM). A pair of wrapper functions were created to run through the optimization process and generate evaluation measures of the model's performance against both the training and testing data sets. Through the optimization process, we passed through various potential values for the cost, tolerance, gamma and epsilon hyperparameters, eventually settling on a series of values that can be reviewed in the adjoining code. We also chose to implement 5-fold cross validation to help improve performance. Our selected SVM model utilized the radial basis function kernel, as it was found to have the best performance. 
 
 ```{r}
 try_svm <- function(
@@ -142,6 +156,7 @@ try_svm <- function(
     cost = seq(0.01, 1, 0.01),
     tolerance = seq(0.001, 0.01, 0.001),
     gamma = seq(0.1, 0.2, 0.01),
+    epsilon = seq(0.1, 1.0, 0.1),
     kernel = kernel,
     cross = k
     )
@@ -174,6 +189,7 @@ full_pca_data <- bind_cols(
 train <- slice_sample(full_pca_data, n = 800)
 test <- slice_sample(anti_join(full_pca_data, train, by = "RecipeId"), n = 200)
 
+# Initial optimization code commented out once hyperparameters were settled on.
 # svm_regr <- try_svm(train, type = "eps-regression", kernel = "radial")
 # best_regr <- svm_regr$best.model
 
@@ -188,10 +204,18 @@ svm_regr <- svm(
 )
 ```
 
+Because this was a regression model, performance was evaluated utilizing the typical suite of metrics - mean squared error (MSE), root mean squared error (RMSE), mean absolute error (MAE). The dominant factor in our evaluation was performance with regards to RMSE, largely because the end result is interpreted in the same units as the output itself. That is, we can use RMSE as an anticipated window of how "off" our predictions can be expected to be. Our RMSE was about 1.5 or 1.7 grams against the training and testing data, respectively. 
+
+The drop in RMSE is to be expected, but given the distribution of values we'd seen during EDA, this is an imperfect but still useful degree of error to work with given our use case. Despite the drop from training-to-testing, it is not an immense drop in predictive ability given the general range of values (0g - 10g) we might anticipate. Knowing that our model can detect the fiber content of a recipe within an average range of about 1.5g is extremely useful.
 
 ```{r}
 (regr_eval <- eval_regr(train, svm_regr))
 ```
+
 ```{r}
 (regr_eval2 <- eval_regr(test, svm_regr, new = TRUE))
 ```
+
+# Conclusion
+
+In all, we were able to create a model that fit our given scenario. While it does not predict fiber content perfectly, we do get within an average of about 1.6g of fiber between what we saw when working with the training and testing data. Utility for a model like this is two fold. On the simplistic side, navigating recipes becomes easier as we can now predict fiber content and essentially filter results based on our personal dietary needs. As new recipes are added or found, we can predict against the new nutritional data and predict whether the recipe itself will meet our personal dietary needs. On the more involved (and likely more interesting side), a model like this could be utilized by recipe developers to have a better control/understanding of the fiber content of a given recipe and therefore consciously create recipes that promote healthier eating. While our model focused on predicting fiber content, the framework could easily be adapted to predict any of the other nutritional variables.
