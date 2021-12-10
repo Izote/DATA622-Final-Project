@@ -110,7 +110,7 @@ For people navigating food recipes, there is the simplistic utility that one cou
 
 # Links and References
 
-Alvin. (2020, December]). Food.com - Recipes and Reviews, Version 2. Retrieved November 12, 2021] from [https://www.kaggle.com/irkaal/foodcom-recipes-and-reviews/].
+Alvin. (2020, December). Food.com - Recipes and Reviews, Version 2. Retrieved November 12, 2021] from [https://www.kaggle.com/irkaal/foodcom-recipes-and-reviews/].
 
 U.S. Department of Agriculture and U.S. Department of Health and Human Services. *Dietary Guidelines for Americans, 2020-2025*. 9th Edition. December 2020. Available at DietaryGuidelines.gov.
 
