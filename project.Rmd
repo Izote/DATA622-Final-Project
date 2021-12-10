@@ -35,8 +35,6 @@ The initial data set consists of over 500,000 recipes and 28 variables. We would
 
 Our goal was to create a model that would help identify recipes that would predict the fiber content a given recipe, thereby empowering content creators and users in generating and consuming healthier recipes. By doing this, we hope to promote public health through the accessible and grassroots act of home cookery. This is not intended as a cure-all, but rather an additional method or tool in the overall pursuit of improving public health.
 
-Despite 
-
 # Exploratory Data Analysis
 
 While strategic sampling is a general best practice, this specific data set was large and we needed to be intentional in our approach to selecting observations. While we would eventually settle on a particular set of predictors and a target variable, we initially had little practical knowledge of the data set. We explored the data to both develop a sense of feasible modeling paths as well as an overall understanding of the data's limitations.
@@ -300,7 +298,7 @@ recipe_pca <- recipe_dbl %>%
 summary(recipe_pca)
 ```
 
-# Code from Modeling Section
+## Code from Modeling Section
 
 ```{r, echo=TRUE, eval=FALSE}
 # The following function was used to run the optimization process 
